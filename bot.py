@@ -1,3 +1,4 @@
+import base64
 import json
 import time
 import math
@@ -5,7 +6,7 @@ import os
 import urllib.request
 import urllib.parse
 from datetime import datetime, timedelta
-from ai import parse_events, parse_events_audio, read_env
+from ai import ask_add_cancel, read_env
 
 
 def read_token():
@@ -93,21 +94,49 @@ def check_reminders():
         save_events(events)
 
 
-def process_events(chat_id, evs):
-    if not evs:
-        reply(chat_id, "Tadbirni tushunolmadim (yoki AI hozir javob bermadi). Aniqroq yozing yoki /add dan foydalaning.")
+def build_events_context(chat_id):
+    now = datetime.now()
+    events = [e for e in load_events()
+              if e["chat_id"] == chat_id
+              and datetime.strptime(e["when"], FMT) >= now]
+    events.sort(key=lambda e: e["when"])
+    if not events:
+        return "(hozircha rejalashtirilgan tadbir yo'q)"
+    return "\n".join(f"id={e['id']} {e['when']} — {e['title']}" for e in events)
+
+
+def process_message_parts(chat_id, message_parts):
+    context = build_events_context(chat_id)
+    context_parts = [{"text": f"Existing upcoming events:\n{context}\n\nNew message:\n"}]
+    result = ask_add_cancel(context_parts, message_parts)
+    lines = []
+
+    if result["cancel_ids"]:
+        events = load_events()
+        kept = []
+        for e in events:
+            if e["chat_id"] == chat_id and e["id"] in result["cancel_ids"]:
+                lines.append(f"🗑 Bekor qilindi: #{e['id']} {e['when']} — {e['title']}")
+            else:
+                kept.append(e)
+        if len(kept) != len(events):
+            save_events(kept)
+
+    if result["add"]:
+        events = load_events()
+        new_id = max([e["id"] for e in events], default=0)
+        for ev in result["add"]:
+            new_id += 1
+            events.append({"id": new_id, "chat_id": chat_id, **ev})
+            line = f"✅ #{new_id} {ev['when']} — {ev['title']}"
+            if ev["travel_min"]:
+                line += f" (yo'l {ev['travel_min']} daq)"
+            lines.append(line)
+        save_events(events)
+
+    if not lines:
+        reply(chat_id, "Tushunolmadim (yoki AI hozir javob bermadi). Aniqroq yozing yoki /add, /del dan foydalaning.")
         return
-    events = load_events()
-    new_id = max([e["id"] for e in events], default=0)
-    lines = ["Qo'shildi ✅"]
-    for ev in evs:
-        new_id += 1
-        events.append({"id": new_id, "chat_id": chat_id, **ev})
-        line = f"#{new_id} {ev['when']} — {ev['title']}"
-        if ev["travel_min"]:
-            line += f" (yo'l {ev['travel_min']} daq)"
-        lines.append(line)
-    save_events(events)
     lines.append("Noto'g'ri bo'lsa: /del raqam")
     reply(chat_id, "\n".join(lines))
 
@@ -131,7 +160,9 @@ def handle_voice(chat_id, file_id):
     if audio is None:
         reply(chat_id, "Ovozni yuklab olishda xato yuz berdi.")
         return
-    process_events(chat_id, parse_events_audio(audio))
+    b64 = base64.b64encode(audio).decode()
+    part = {"inline_data": {"mime_type": "audio/ogg", "data": b64}}
+    process_message_parts(chat_id, [part])
 
 
 def handle(chat_id, text):
@@ -254,7 +285,7 @@ def handle(chat_id, text):
         day_names = "har kuni" if days == list(range(7)) else ", ".join(DAY_NAMES[d] for d in days)
         reply(chat_id, f"Odat qo'shildi 🔁 (#{new_id})\n{parts[1]} — {title} ({day_names})")
     elif not text.startswith("/"):
-        process_events(chat_id, parse_events(text))
+        process_message_parts(chat_id, [{"text": text}])
     else:
         reply(chat_id, "👋 Men kunlik rejalashtiruvchi botman.\n\nOddiy yozing yoki ovozli xabar yuboring, AI tushunadi:\n«ertaga 10 da School 21, yo'lga 40 daqiqa»\n\n/today — bugungi reja\n/tomorrow — ertangi reja\n/list — kelgusi tadbirlar\n/add — qo'lda qo'shish\n/del 3 — o'chirish")
 

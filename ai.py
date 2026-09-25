@@ -17,6 +17,21 @@ Rules:
 - Uzbek hints: bugun = today, ertaga = tomorrow, indinga = the day after tomorrow, ertalab = morning, tushda = noon, kechqurun/kechga = evening (soat 8 kechqurun = 20:00). Without a period word, pick the most plausible time (school, work meetings in the morning are usually AM; an explicit 17:30 is exact).
 - If there is no clear event with a date and time, return {"events": []}."""
 
+CANCEL_RULES = """The user writes in Uzbek (sometimes Russian or English). You are given two things:
+1) A list of the user's currently planned UPCOMING events, each with an id, date+time and title.
+2) A new message from the user (text or voice).
+
+Decide what the message means and return ONLY JSON:
+{"add": [{"title": string, "date": "YYYY-MM-DD", "time": "HH:MM" (24-hour), "travel_min": integer}], "cancel_ids": [integer, ...]}
+
+Rules:
+- "cancel_ids": ids (from the given list) of existing events that this message clearly cancels — phrases like "bormayman", "otmen qildim/bo'ldi", "bekor qildim", "bormaydigan bo'ldim", "kelolmayman", "qolmayapman" etc. Match the right event by topic/place/time similarity to the message. If nothing in the message is about cancelling, or no existing event clearly matches, return an empty list — never guess.
+- "add": brand-new events described in the message that are not already in the existing list. A message that is ONLY a cancellation must produce an empty "add" list — do not re-add the thing being cancelled.
+- One message can both cancel one event and add a different new one (e.g. "bugungi uchrashuv bekor, ertaga soat 10 da bo'ladi" — cancel the old one, add the new one).
+- travel_min is travel time in minutes for a new event if mentioned, otherwise 0.
+- Uzbek hints: bugun = today, ertaga = tomorrow, indinga = the day after tomorrow, ertalab = morning, tushda = noon, kechqurun/kechga = evening (soat 8 kechqurun = 20:00).
+- Keep titles in the original language of the user. Do NOT translate."""
+
 
 def read_env(name):
     with open(".env") as f:
@@ -71,6 +86,50 @@ def ask_events_audio(rules, audio_bytes, mime_type="audio/ogg",
     b64 = base64.b64encode(audio_bytes).decode()
     part = {"inline_data": {"mime_type": mime_type, "data": b64}}
     return ask_events_from_parts(rules, [part], key_name, url)
+
+
+def ask_add_cancel(context_parts, message_parts, key_name="GEMINI_API_KEY", url=URL):
+    """context_parts — mavjud tadbirlar haqidagi matn qismi(lar)i.
+    message_parts — foydalanuvchi yangi xabari (matn va/yoki ovoz qismlari).
+    Qaytaradi: {"add": [{"when","title","travel_min"}, ...], "cancel_ids": [int, ...]}"""
+    parts = context_parts + message_parts
+    now = datetime.now()
+    system = f"Today is {now:%Y-%m-%d} ({now:%A}).\n" + CANCEL_RULES
+    body = {
+        "systemInstruction": {"parts": [{"text": system}]},
+        "contents": [{"parts": parts}],
+        "generationConfig": {"responseMimeType": "application/json",
+                             "temperature": 0},
+    }
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json",
+                 "x-goog-api-key": read_env(key_name)})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.load(resp)
+        raw = json.loads(data["candidates"][0]["content"]["parts"][0]["text"])
+        add_raw = raw.get("add", []) if isinstance(raw, dict) else []
+        cancel_raw = raw.get("cancel_ids", []) if isinstance(raw, dict) else []
+        add = []
+        for ev in add_raw:
+            when = f'{ev["date"]} {ev["time"]}'
+            datetime.strptime(when, FMT)
+            title = str(ev["title"]).strip()
+            travel = int(ev.get("travel_min", 0))
+            if not title or not 0 <= travel <= 300:
+                continue
+            add.append({"when": when, "title": title, "travel_min": travel})
+        cancel_ids = []
+        for cid in cancel_raw:
+            try:
+                cancel_ids.append(int(cid))
+            except (TypeError, ValueError):
+                continue
+        return {"add": add, "cancel_ids": cancel_ids}
+    except (OSError, ValueError, KeyError, IndexError, TypeError) as err:
+        print(f"AI xato: {err}")
+        return {"add": [], "cancel_ids": []}
 
 
 def parse_events(text):
