@@ -5,7 +5,7 @@ import os
 import urllib.request
 import urllib.parse
 from datetime import datetime, timedelta
-from ai import parse_events, read_env
+from ai import parse_events, parse_events_audio, read_env
 
 
 def read_token():
@@ -91,6 +91,47 @@ def check_reminders():
             changed = True
     if changed:
         save_events(events)
+
+
+def process_events(chat_id, evs):
+    if not evs:
+        reply(chat_id, "Tadbirni tushunolmadim (yoki AI hozir javob bermadi). Aniqroq yozing yoki /add dan foydalaning.")
+        return
+    events = load_events()
+    new_id = max([e["id"] for e in events], default=0)
+    lines = ["Qo'shildi ✅"]
+    for ev in evs:
+        new_id += 1
+        events.append({"id": new_id, "chat_id": chat_id, **ev})
+        line = f"#{new_id} {ev['when']} — {ev['title']}"
+        if ev["travel_min"]:
+            line += f" (yo'l {ev['travel_min']} daq)"
+        lines.append(line)
+    save_events(events)
+    lines.append("Noto'g'ri bo'lsa: /del raqam")
+    reply(chat_id, "\n".join(lines))
+
+
+def download_voice(file_id):
+    info = api("getFile", file_id=file_id)
+    if not info.get("ok"):
+        return None
+    file_path = info["result"]["file_path"]
+    url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+    try:
+        with urllib.request.urlopen(url, timeout=40) as resp:
+            return resp.read()
+    except OSError as err:
+        print(f"ovoz yuklab olishda xato: {err}")
+        return None
+
+
+def handle_voice(chat_id, file_id):
+    audio = download_voice(file_id)
+    if audio is None:
+        reply(chat_id, "Ovozni yuklab olishda xato yuz berdi.")
+        return
+    process_events(chat_id, parse_events_audio(audio))
 
 
 def handle(chat_id, text):
@@ -184,6 +225,8 @@ def handle(chat_id, text):
             lines = [f"📅 {day}"]
             lines += [f"{t:%H:%M} {name}" for t, name in items]
             reply(chat_id, "\n".join(lines))
+    elif text.split()[0] == "/habits" and len(text.split()) == 1:
+        show_habits(chat_id)
     elif text.startswith("/habit "):
         parts = text.split(maxsplit=2)
         if len(parts) < 3:
@@ -211,25 +254,9 @@ def handle(chat_id, text):
         day_names = "har kuni" if days == list(range(7)) else ", ".join(DAY_NAMES[d] for d in days)
         reply(chat_id, f"Odat qo'shildi 🔁 (#{new_id})\n{parts[1]} — {title} ({day_names})")
     elif not text.startswith("/"):
-        evs = parse_events(text)
-        if not evs:
-            reply(chat_id, "Tadbirni tushunolmadim (yoki AI hozir javob bermadi). Aniqroq yozing yoki /add dan foydalaning.")
-            return
-        events = load_events()
-        new_id = max([e["id"] for e in events], default=0)
-        lines = ["Qo'shildi ✅"]
-        for ev in evs:
-            new_id += 1
-            events.append({"id": new_id, "chat_id": chat_id, **ev})
-            line = f"#{new_id} {ev['when']} — {ev['title']}"
-            if ev["travel_min"]:
-                line += f" (yo'l {ev['travel_min']} daq)"
-            lines.append(line)
-        save_events(events)
-        lines.append("Noto'g'ri bo'lsa: /del raqam")
-        reply(chat_id, "\n".join(lines))
+        process_events(chat_id, parse_events(text))
     else:
-        reply(chat_id, "👋 Men kunlik rejalashtiruvchi botman.\n\nOddiy yozing, AI tushunadi:\n«ertaga 10 da School 21, yo'lga 40 daqiqa»\n\n/today — bugungi reja\n/tomorrow — ertangi reja\n/list — kelgusi tadbirlar\n/add — qo'lda qo'shish\n/del 3 — o'chirish")
+        reply(chat_id, "👋 Men kunlik rejalashtiruvchi botman.\n\nOddiy yozing yoki ovozli xabar yuboring, AI tushunadi:\n«ertaga 10 da School 21, yo'lga 40 daqiqa»\n\n/today — bugungi reja\n/tomorrow — ertangi reja\n/list — kelgusi tadbirlar\n/add — qo'lda qo'shish\n/del 3 — o'chirish")
 
 
 STATE_FILE = "state.json"
@@ -287,6 +314,7 @@ COMMANDS = [
     ("add", "➕ Tadbir qo'shish"),
     ("del", "🗑 Tadbirni o'chirish"),
     ("habit", "🔁 Odat qo'shish"),
+    ("habits", "📜 Odatlar ro'yxati"),
 ]
 api("setMyCommands", commands=json.dumps(
     [{"command": c, "description": d} for c, d in COMMANDS],
@@ -347,8 +375,26 @@ def handle_callback(cb):
     if str(chat_id) != OWNER:
         return
     data = cb.get("data", "")
-    if not (data.startswith("del:") and data[4:].isdigit()):
+    if not ((data.startswith("del:") and data[4:].isdigit())
+            or (data.startswith("delhabit:") and data[9:].isdigit())):
         api("answerCallbackQuery", callback_query_id=cb["id"])
+        return
+    if data.startswith("delhabit:") and data[9:].isdigit():
+        del_id = int(data[9:])
+        habits = load_json(HABITS_FILE, [])
+        kept = [h for h in habits
+                if not (h["id"] == del_id and h["chat_id"] == chat_id)]
+        if len(kept) != len(habits):
+            save_json(HABITS_FILE, kept)
+            note = "Odat o'chirildi 🗑"
+        else:
+            note = "Bu odat allaqachon yo'q"
+        api("answerCallbackQuery", callback_query_id=cb["id"], text=note)
+        text, markup = build_habits(chat_id)
+        api("editMessageText", chat_id=chat_id,
+            message_id=cb["message"]["message_id"], text=text,
+            reply_markup=json.dumps(markup or {"inline_keyboard": []},
+                                    ensure_ascii=False))
         return
     del_id = int(data[4:])
     events = load_events()
@@ -383,6 +429,27 @@ def parse_days(spec):
             return None
         days.append(matched)
     return sorted(set(days))
+
+def build_habits(chat_id):
+    habits = [h for h in load_json(HABITS_FILE, []) if h["chat_id"] == chat_id]
+    habits.sort(key=lambda h: h["time"])
+    if not habits:
+        return "🔁 Odat yo'q", None
+    lines = ["🔁 Odatlar"]
+    buttons = []
+    for h in habits:
+        day_names = "har kuni" if h["days"] == list(range(7)) else ", ".join(DAY_NAMES[d] for d in h["days"])
+        lines.append(f"🕙 {h['time']} — {h['title']} ({day_names})")
+        label = f"🗑 {h['time']} {h['title']}"[:40]
+        buttons.append([{"text": label, "callback_data": f"delhabit:{h['id']}"}])
+    return "\n".join(lines), {"inline_keyboard": buttons}
+
+def show_habits(chat_id):
+    text, markup = build_habits(chat_id)
+    params = {"chat_id": chat_id, "text": text}
+    if markup:
+        params["reply_markup"] = json.dumps(markup, ensure_ascii=False)
+    api("sendMessage", **params)
 
 def ensure_habit_events():
     habits = load_json(HABITS_FILE, [])
@@ -423,11 +490,14 @@ while True:
             handle_callback(cb)
             continue
         msg = u.get("message")
-        if msg and "text" in msg:
+        if msg:
             if str(msg["chat"]["id"]) != OWNER:
                 continue
             remember_user(msg["chat"]["id"])
-            handle(msg["chat"]["id"], msg["text"])
+            if "voice" in msg:
+                handle_voice(msg["chat"]["id"], msg["voice"]["file_id"])
+            elif "text" in msg:
+                handle(msg["chat"]["id"], msg["text"])
     check_reminders()
     check_brief()
     cleanup_past()

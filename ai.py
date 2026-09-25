@@ -1,3 +1,4 @@
+import base64
 import json
 import urllib.request
 from datetime import datetime
@@ -24,12 +25,15 @@ def read_env(name):
                 return line.strip().split("=", 1)[1]
 
 
-def ask_events(rules, text, key_name="GEMINI_API_KEY", url=URL):
+def ask_events_from_parts(rules, parts, key_name="GEMINI_API_KEY", url=URL):
+    """parts — Gemini 'contents[0].parts' formatidagi ro'yxat.
+    Matn uchun {"text": "..."}, ovoz uchun
+    {"inline_data": {"mime_type": "audio/ogg", "data": base64_str}}."""
     now = datetime.now()
     system = f"Today is {now:%Y-%m-%d} ({now:%A}).\n" + rules
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
-        "contents": [{"parts": [{"text": text}]}],
+        "contents": [{"parts": parts}],
         "generationConfig": {"responseMimeType": "application/json",
                              "temperature": 0},
     }
@@ -58,8 +62,23 @@ def ask_events(rules, text, key_name="GEMINI_API_KEY", url=URL):
         return []
 
 
+def ask_events(rules, text, key_name="GEMINI_API_KEY", url=URL):
+    return ask_events_from_parts(rules, [{"text": text}], key_name, url)
+
+
+def ask_events_audio(rules, audio_bytes, mime_type="audio/ogg",
+                      key_name="GEMINI_API_KEY", url=URL):
+    b64 = base64.b64encode(audio_bytes).decode()
+    part = {"inline_data": {"mime_type": mime_type, "data": b64}}
+    return ask_events_from_parts(rules, [part], key_name, url)
+
+
 def parse_events(text):
     return ask_events(RULES, text)
+
+
+def parse_events_audio(audio_bytes, mime_type="audio/ogg"):
+    return ask_events_audio(RULES, audio_bytes, mime_type)
 
 
 def parse_event(text):
