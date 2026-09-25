@@ -43,10 +43,11 @@ def read_env(name):
                 return line.strip().split("=", 1)[1]
 
 
-def ask_events_from_parts(rules, parts, key_name="GEMINI_API_KEY", url=URL):
+def ask_events_from_parts(rules, parts, api_key, url=URL):
     """parts — Gemini 'contents[0].parts' formatidagi ro'yxat.
     Matn uchun {"text": "..."}, ovoz uchun
-    {"inline_data": {"mime_type": "audio/ogg", "data": base64_str}}."""
+    {"inline_data": {"mime_type": "audio/ogg", "data": base64_str}}.
+    api_key — shu foydalanuvchining o'z Gemini API kaliti."""
     now = datetime.now()
     system = f"Today is {now:%Y-%m-%d} ({now:%A}), current time is {now:%H:%M}.\n" + rules
     body = {
@@ -58,7 +59,7 @@ def ask_events_from_parts(rules, parts, key_name="GEMINI_API_KEY", url=URL):
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json",
-                 "x-goog-api-key": read_env(key_name)})
+                 "x-goog-api-key": api_key})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.load(resp)
@@ -80,20 +81,20 @@ def ask_events_from_parts(rules, parts, key_name="GEMINI_API_KEY", url=URL):
         return []
 
 
-def ask_events(rules, text, key_name="GEMINI_API_KEY", url=URL):
-    return ask_events_from_parts(rules, [{"text": text}], key_name, url)
+def ask_events(rules, text, api_key, url=URL):
+    return ask_events_from_parts(rules, [{"text": text}], api_key, url)
 
 
-def ask_events_audio(rules, audio_bytes, mime_type="audio/ogg",
-                      key_name="GEMINI_API_KEY", url=URL):
+def ask_events_audio(rules, audio_bytes, api_key, mime_type="audio/ogg", url=URL):
     b64 = base64.b64encode(audio_bytes).decode()
     part = {"inline_data": {"mime_type": mime_type, "data": b64}}
-    return ask_events_from_parts(rules, [part], key_name, url)
+    return ask_events_from_parts(rules, [part], api_key, url)
 
 
-def ask_add_cancel(context_parts, message_parts, key_name="GEMINI_API_KEY", url=URL):
+def ask_add_cancel(context_parts, message_parts, api_key, url=URL):
     """context_parts — mavjud tadbirlar haqidagi matn qismi(lar)i.
     message_parts — foydalanuvchi yangi xabari (matn va/yoki ovoz qismlari).
+    api_key — shu foydalanuvchining o'z Gemini API kaliti.
     Qaytaradi: {"add": [{"when","title","travel_min"}, ...], "cancel_ids": [int, ...]}"""
     parts = context_parts + message_parts
     now = datetime.now()
@@ -107,7 +108,7 @@ def ask_add_cancel(context_parts, message_parts, key_name="GEMINI_API_KEY", url=
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json",
-                 "x-goog-api-key": read_env(key_name)})
+                 "x-goog-api-key": api_key})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.load(resp)
@@ -135,14 +136,14 @@ def ask_add_cancel(context_parts, message_parts, key_name="GEMINI_API_KEY", url=
         return {"add": [], "cancel_ids": []}
 
 
-def parse_events(text):
-    return ask_events(RULES, text)
+def parse_events(text, api_key):
+    return ask_events(RULES, text, api_key)
 
 
-def parse_events_audio(audio_bytes, mime_type="audio/ogg"):
-    return ask_events_audio(RULES, audio_bytes, mime_type)
+def parse_events_audio(audio_bytes, api_key, mime_type="audio/ogg"):
+    return ask_events_audio(RULES, audio_bytes, api_key, mime_type)
 
 
-def parse_event(text):
-    evs = parse_events(text)
+def parse_event(text, api_key):
+    evs = parse_events(text, api_key)
     return evs[0] if evs else None

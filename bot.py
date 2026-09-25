@@ -6,7 +6,7 @@ import os
 import urllib.request
 import urllib.parse
 from datetime import datetime, timedelta
-from ai import ask_add_cancel, read_env
+from ai import ask_add_cancel
 
 
 def read_token():
@@ -17,12 +17,17 @@ def read_token():
 
 
 TOKEN = read_token()
-OWNER = read_env("OWNER_CHAT_ID")
 EVENTS_FILE = "events.json"
 HABITS_FILE = "habits.json"
+KEYS_FILE = "keys.json"
 FMT = "%Y-%m-%d %H:%M"
 PREP_MIN = 15
 USAGE = "Format: /add 2026-09-25 10:00 School 21 | 40\n(| dan keyin yo'l vaqti, daqiqada, ixtiyoriy)"
+SETKEY_USAGE = ("AI orqali yozish/ovoz yuborish uchun avval o'zingizning bepul "
+                "Gemini API kalitingizni ulang:\n\n"
+                "1) https://aistudio.google.com/apikey saytiga kiring va \"Create API key\" bosing\n"
+                "2) Bu yerga yuboring: /setkey KALIT_BU_YERGA\n\n"
+                "Xabaringizni xavfsizlik uchun darhol o'chirib tashlayman.")
 
 
 def api(method, **params):
@@ -111,9 +116,13 @@ NEGATION_WORDS = ["bormayman", "bormaydigan", "bekor", "otmen", "kelmayman",
 
 
 def process_message_parts(chat_id, message_parts):
+    api_key = get_key(chat_id)
+    if not api_key:
+        reply(chat_id, SETKEY_USAGE)
+        return
     context = build_events_context(chat_id)
     context_parts = [{"text": f"Existing upcoming events:\n{context}\n\nNew message:\n"}]
-    result = ask_add_cancel(context_parts, message_parts)
+    result = ask_add_cancel(context_parts, message_parts, api_key)
     lines = []
     now = datetime.now()
 
@@ -193,6 +202,17 @@ def handle_voice(chat_id, file_id):
 
 
 def handle(chat_id, text):
+    if text.startswith("/start"):
+        reply(chat_id, "👋 Salom! Men kunlik rejalashtiruvchi botman.\n\n" + SETKEY_USAGE)
+        return
+    if text.startswith("/setkey"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            reply(chat_id, "Format: /setkey KALIT_BU_YERGA\n\n" + SETKEY_USAGE)
+            return
+        set_key(chat_id, parts[1].strip())
+        reply(chat_id, "Kalit saqlandi ✅ Endi yozing yoki ovozli xabar yuboring.")
+        return
     if text.startswith("/add"):
         parts = text.split(maxsplit=3)
         if len(parts) < 4:
@@ -335,6 +355,16 @@ def save_json(path, data):
         json.dump(data, f)
 
 
+def get_key(chat_id):
+    return load_json(KEYS_FILE, {}).get(str(chat_id))
+
+
+def set_key(chat_id, key):
+    keys = load_json(KEYS_FILE, {})
+    keys[str(chat_id)] = key
+    save_json(KEYS_FILE, keys)
+
+
 def remember_user(chat_id):
     users = load_json(USERS_FILE, [])
     if chat_id not in users:
@@ -366,6 +396,8 @@ def cleanup_past():
 
 
 COMMANDS = [
+    ("start", "👋 Botni tanishtirish"),
+    ("setkey", "🔑 AI kalitini sozlash"),
     ("today", "📅 Bugungi reja"),
     ("tomorrow", "🌅 Ertangi reja"),
     ("list", "📋 Kelgusi tadbirlar"),
@@ -430,8 +462,6 @@ def show_list(chat_id):
 
 def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
-    if str(chat_id) != OWNER:
-        return
     data = cb.get("data", "")
     if not ((data.startswith("del:") and data[4:].isdigit())
             or (data.startswith("delhabit:") and data[9:].isdigit())):
@@ -549,13 +579,15 @@ while True:
             continue
         msg = u.get("message")
         if msg:
-            if str(msg["chat"]["id"]) != OWNER:
-                continue
-            remember_user(msg["chat"]["id"])
+            chat_id = msg["chat"]["id"]
+            remember_user(chat_id)
             if "voice" in msg:
-                handle_voice(msg["chat"]["id"], msg["voice"]["file_id"])
+                handle_voice(chat_id, msg["voice"]["file_id"])
             elif "text" in msg:
-                handle(msg["chat"]["id"], msg["text"])
+                handle(chat_id, msg["text"])
+                if msg["text"].startswith("/setkey"):
+                    # Xavfsizlik uchun kalitni o'z ichiga olgan xabarni o'chiramiz
+                    api("deleteMessage", chat_id=chat_id, message_id=msg["message_id"])
     check_reminders()
     check_brief()
     cleanup_past()
