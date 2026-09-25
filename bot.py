@@ -18,6 +18,7 @@ def read_token():
 TOKEN = read_token()
 OWNER = read_env("OWNER_CHAT_ID")
 EVENTS_FILE = "events.json"
+HABITS_FILE = "habits.json"
 FMT = "%Y-%m-%d %H:%M"
 PREP_MIN = 15
 USAGE = "Format: /add 2026-09-25 10:00 School 21 | 40\n(| dan keyin yo'l vaqti, daqiqada, ixtiyoriy)"
@@ -183,6 +184,32 @@ def handle(chat_id, text):
             lines = [f"📅 {day}"]
             lines += [f"{t:%H:%M} {name}" for t, name in items]
             reply(chat_id, "\n".join(lines))
+    elif text.startswith("/habit "):
+        parts = text.split(maxsplit=2)
+        if len(parts) < 3:
+            reply(chat_id, "Format: /habit 07:00 Rus tili\nyoki: /habit 07:00 Rus tili | Du,Se,Cho,Pa,Ju")
+            return
+        try:
+            datetime.strptime(parts[1], "%H:%M")
+        except ValueError:
+            reply(chat_id, "Vaqt HH:MM bo'lsin, masalan 07:00")
+            return
+        title = parts[2]
+        days = list(range(7))
+        if "|" in title:
+            title, dayspec = title.split("|", 1)
+            days = parse_days(dayspec)
+            if days is None:
+                reply(chat_id, "Kunlarni tushunolmadim. Masalan: Du,Se,Cho,Pa,Ju")
+                return
+        title = title.strip()
+        habits = load_json(HABITS_FILE, [])
+        new_id = max([h["id"] for h in habits], default=0) + 1
+        habits.append({"id": new_id, "chat_id": chat_id, "time": parts[1],
+                       "title": title, "days": days})
+        save_json(HABITS_FILE, habits)
+        day_names = "har kuni" if days == list(range(7)) else ", ".join(DAY_NAMES[d] for d in days)
+        reply(chat_id, f"Odat qo'shildi 🔁 (#{new_id})\n{parts[1]} — {title} ({day_names})")
     elif not text.startswith("/"):
         evs = parse_events(text)
         if not evs:
@@ -259,6 +286,7 @@ COMMANDS = [
     ("list", "📋 Kelgusi tadbirlar"),
     ("add", "➕ Tadbir qo'shish"),
     ("del", "🗑 Tadbirni o'chirish"),
+    ("habit", "🔁 Odat qo'shish"),
 ]
 api("setMyCommands", commands=json.dumps(
     [{"command": c, "description": d} for c, d in COMMANDS],
@@ -339,6 +367,48 @@ def handle_callback(cb):
                                 ensure_ascii=False))
 
 
+DAY_MAP = {"du": 0, "se": 1, "cho": 2, "pa": 3, "ju": 4, "sha": 5, "ya": 6}
+DAY_NAMES = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"]
+
+def parse_days(spec):
+    days = []
+    for token in spec.split(","):
+        key = token.strip().lower()
+        matched = None
+        for short, num in DAY_MAP.items():
+            if key.startswith(short):
+                matched = num
+                break
+        if matched is None:
+            return None
+        days.append(matched)
+    return sorted(set(days))
+
+def ensure_habit_events():
+    habits = load_json(HABITS_FILE, [])
+    if not habits:
+        return
+    events = load_events()
+    changed = False
+    today = datetime.now().date()
+    for offset_days in (0, 1):
+        day = today + timedelta(days=offset_days)
+        day_str = day.strftime("%Y-%m-%d")
+        for h in habits:
+            if day.weekday() not in h["days"]:
+                continue
+            exists = any(e.get("habit_id") == h["id"] and e["when"].startswith(day_str)
+                        for e in events)
+            if exists:
+                continue
+            new_id = max([e["id"] for e in events], default=0) + 1
+            events.append({"id": new_id, "chat_id": h["chat_id"],
+                           "when": f"{day_str} {h['time']}", "title": h["title"],
+                           "travel_min": h.get("travel_min", 0), "habit_id": h["id"]})
+            changed = True
+    if changed:
+        save_events(events)
+
 offset = None
 print("Bot ishga tushdi. To'xtatish: Ctrl+C")
 while True:
@@ -361,3 +431,4 @@ while True:
     check_reminders()
     check_brief()
     cleanup_past()
+    ensure_habit_events()
