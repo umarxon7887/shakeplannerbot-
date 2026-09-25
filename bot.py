@@ -105,11 +105,17 @@ def build_events_context(chat_id):
     return "\n".join(f"id={e['id']} {e['when']} — {e['title']}" for e in events)
 
 
+NEGATION_WORDS = ["bormayman", "bormaydigan", "bekor", "otmen", "kelmayman",
+                  "qilmayman", "bormadim", "borolmayman", "bora olmayman",
+                  "qatnashmayman"]
+
+
 def process_message_parts(chat_id, message_parts):
     context = build_events_context(chat_id)
     context_parts = [{"text": f"Existing upcoming events:\n{context}\n\nNew message:\n"}]
     result = ask_add_cancel(context_parts, message_parts)
     lines = []
+    now = datetime.now()
 
     if result["cancel_ids"]:
         events = load_events()
@@ -122,10 +128,28 @@ def process_message_parts(chat_id, message_parts):
         if len(kept) != len(events):
             save_events(kept)
 
-    if result["add"]:
+    # Himoya 1: "bormayman/bekor/otmen" kabi salbiy gap hech qaysi mavjud
+    # tadbirga mos kelmasa, AI xato qilib uni yangi tadbir sifatida
+    # qo'shmasin (rad javobi tadbir emas).
+    suspicious = False
+    clean_add = []
+    for ev in result["add"]:
+        title_lower = ev["title"].lower()
+        if any(w in title_lower for w in NEGATION_WORDS):
+            suspicious = True
+            continue
+        clean_add.append(ev)
+
+    if clean_add:
         events = load_events()
         new_id = max([e["id"] for e in events], default=0)
-        for ev in result["add"]:
+        for ev in clean_add:
+            # Himoya 2: o'tib ketgan vaqtga tadbir qo'shilmasin —
+            # AI xato qilib bugungi o'tib ketgan soatni bersa, ertaga suramiz.
+            when_dt = datetime.strptime(ev["when"], FMT)
+            if when_dt <= now:
+                when_dt += timedelta(days=1)
+                ev["when"] = when_dt.strftime(FMT)
             new_id += 1
             events.append({"id": new_id, "chat_id": chat_id, **ev})
             line = f"✅ #{new_id} {ev['when']} — {ev['title']}"
@@ -135,7 +159,10 @@ def process_message_parts(chat_id, message_parts):
         save_events(events)
 
     if not lines:
-        reply(chat_id, "Tushunolmadim (yoki AI hozir javob bermadi). Aniqroq yozing yoki /add, /del dan foydalaning.")
+        if suspicious:
+            reply(chat_id, "Bekor qilishni tushundim, lekin mos keluvchi tadbirni topolmadim. /list dan tekshirib, /del raqam bilan o'chiring.")
+        else:
+            reply(chat_id, "Tushunolmadim (yoki AI hozir javob bermadi). Aniqroq yozing yoki /add, /del dan foydalaning.")
         return
     lines.append("Noto'g'ri bo'lsa: /del raqam")
     reply(chat_id, "\n".join(lines))

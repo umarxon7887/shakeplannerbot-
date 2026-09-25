@@ -15,7 +15,8 @@ Rules:
 - travel_min is travel time in minutes for THAT event ("yolga 15 minut", "bir soat vaqtim ketadi" = 60); use 0 if not mentioned.
 - A date word like "ertaga" applies to all following events until another date is given.
 - Uzbek hints: bugun = today, ertaga = tomorrow, indinga = the day after tomorrow, ertalab = morning, tushda = noon, kechqurun/kechga = evening (soat 8 kechqurun = 20:00). Without a period word, pick the most plausible time (school, work meetings in the morning are usually AM; an explicit 17:30 is exact).
-- If there is no clear event with a date and time, return {"events": []}."""
+- If there is no clear event with a date and time, return {"events": []}.
+- If only a time is given with no explicit date word (no "bugun"/"ertaga"/etc.), and that time has already passed today (compare to the given current time), use TOMORROW's date instead of today's — never schedule something in the past."""
 
 CANCEL_RULES = """The user writes in Uzbek (sometimes Russian or English). You are given two things:
 1) A list of the user's currently planned UPCOMING events, each with an id, date+time and title.
@@ -30,7 +31,9 @@ Rules:
 - One message can both cancel one event and add a different new one (e.g. "bugungi uchrashuv bekor, ertaga soat 10 da bo'ladi" — cancel the old one, add the new one).
 - travel_min is travel time in minutes for a new event if mentioned, otherwise 0.
 - Uzbek hints: bugun = today, ertaga = tomorrow, indinga = the day after tomorrow, ertalab = morning, tushda = noon, kechqurun/kechga = evening (soat 8 kechqurun = 20:00).
-- Keep titles in the original language of the user. Do NOT translate."""
+- Keep titles in the original language of the user. Do NOT translate.
+- If only a time is given for a new "add" event with no explicit date word, and that time has already passed today (compare to the given current time), use TOMORROW's date instead of today's — never schedule something in the past.
+- If the message expresses NOT doing / cancelling something ("bormayman", "bormaydigan bo'ldim", "bekor", "otmen", "kelmayman", "qilmayman" etc.) but no existing event in the given list clearly matches it, return {"add": [], "cancel_ids": []}. NEVER create a new "add" event whose title is the cancellation/negation phrase itself — a refusal is not an event."""
 
 
 def read_env(name):
@@ -45,7 +48,7 @@ def ask_events_from_parts(rules, parts, key_name="GEMINI_API_KEY", url=URL):
     Matn uchun {"text": "..."}, ovoz uchun
     {"inline_data": {"mime_type": "audio/ogg", "data": base64_str}}."""
     now = datetime.now()
-    system = f"Today is {now:%Y-%m-%d} ({now:%A}).\n" + rules
+    system = f"Today is {now:%Y-%m-%d} ({now:%A}), current time is {now:%H:%M}.\n" + rules
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"parts": parts}],
@@ -94,7 +97,7 @@ def ask_add_cancel(context_parts, message_parts, key_name="GEMINI_API_KEY", url=
     Qaytaradi: {"add": [{"when","title","travel_min"}, ...], "cancel_ids": [int, ...]}"""
     parts = context_parts + message_parts
     now = datetime.now()
-    system = f"Today is {now:%Y-%m-%d} ({now:%A}).\n" + CANCEL_RULES
+    system = f"Today is {now:%Y-%m-%d} ({now:%A}), current time is {now:%H:%M}.\n" + CANCEL_RULES
     body = {
         "systemInstruction": {"parts": [{"text": system}]},
         "contents": [{"parts": parts}],
