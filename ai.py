@@ -1,9 +1,10 @@
 import base64
 import json
+import urllib.error
 import urllib.request
 from datetime import datetime
 
-MODEL = "gemini-3.1-flash-lite"
+MODEL = "gemini-flash-latest"
 FMT = "%Y-%m-%d %H:%M"
 URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
 
@@ -76,6 +77,10 @@ def ask_events_from_parts(rules, parts, api_key, url=URL):
                 continue
             result.append({"when": when, "title": title, "travel_min": travel})
         return result
+    except urllib.error.HTTPError as err:
+        body = err.read().decode(errors="replace")
+        print(f"AI xato: HTTP {err.code}: {body}")
+        return []
     except (OSError, ValueError, KeyError, IndexError, TypeError) as err:
         print(f"AI xato: {err}")
         return []
@@ -131,6 +136,10 @@ def ask_add_cancel(context_parts, message_parts, api_key, url=URL):
             except (TypeError, ValueError):
                 continue
         return {"add": add, "cancel_ids": cancel_ids}
+    except urllib.error.HTTPError as err:
+        body = err.read().decode(errors="replace")
+        print(f"AI xato: HTTP {err.code}: {body}")
+        return {"add": [], "cancel_ids": []}
     except (OSError, ValueError, KeyError, IndexError, TypeError) as err:
         print(f"AI xato: {err}")
         return {"add": [], "cancel_ids": []}

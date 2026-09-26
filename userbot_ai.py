@@ -2,9 +2,10 @@ from ai import ask_events, read_env
 
 # Alohida kalit: .env ichida USERBOT_GEMINI_KEY=...
 # Ixtiyoriy: USERBOT_MODEL=... (bo'lmasa, quyidagi model ishlatiladi)
-MODEL = read_env("USERBOT_MODEL") or "gemini-3.1-flash-lite"
+MODEL = read_env("USERBOT_MODEL") or "gemini-flash-latest"
 FMT = "%Y-%m-%d %H:%M"
 URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent"
+API_KEY = read_env("USERBOT_GEMINI_KEY")
 
 RULES = """You get a chat between two people. "Men" is the bot owner. Chat language is Uzbek (sometimes Russian or English).
 Read the WHOLE conversation and extract ALL events that Men agreed to attend or do. Return ONLY JSON:
@@ -21,4 +22,4 @@ Rules:
 
 
 def parse_conversation(convo):
-    return ask_events(RULES, convo, "USERBOT_GEMINI_KEY", URL)
+    return ask_events(RULES, convo, API_KEY, URL)

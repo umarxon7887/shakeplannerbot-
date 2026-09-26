@@ -23,6 +23,27 @@ KEYS_FILE = "keys.json"
 FMT = "%Y-%m-%d %H:%M"
 PREP_MIN = 15
 USAGE = "Format: /add 2026-09-25 10:00 School 21 | 40\n(| dan keyin yo'l vaqti, daqiqada, ixtiyoriy)"
+START_MESSAGE = (
+    "👋 Salom! Men — ShakePlanner.\n\n"
+    "Men sizning shaxsiy AI rejalashtiruvchingizman. 📅🧠\n\n"
+    "Menga rejalaringizni oddiy odam bilan gaplashgandek aytishingiz mumkin.\n\n"
+    "Masalan:\n"
+    "🗓️ «Ertaga soat 10:00 da School 21 ga boraman, yo'lga 40 daqiqa ketadi.»\n\n"
+    "Men buni tushunaman, rejangizga qo'shaman va kerakli vaqtda eslataman. ⏰\n\n"
+    "Siz hatto:\n"
+    "🎙️ Ovozli xabar yuborishingiz mumkin.\n"
+    "💬 Oddiy suhbatda kelishilgan uchrashuvlarni tushunaman.\n"
+    "❌ Uchrashuv bekor bo'lsa, menga ayting — rejangizni yangilayman.\n"
+    "🔄 Reja o'zgarsa, men ham uni moslashtiraman.\n\n"
+    "Eng muhimi — menga qanday gapirishni o'rganishingiz shart emas. "
+    "Shunchaki rejangizni ayting — qolganini men tushunishga harakat qilaman. 🤝\n\n"
+    "🔑 Boshlash uchun avval bepul AI kalitingizni ulang:\n"
+    "1) https://aistudio.google.com/apikey ga kiring, \"Create API key\" bosing\n"
+    "2) Bu yerga yuboring: /setkey KALIT_BU_YERGA\n"
+    "(xabaringizni xavfsizlik uchun darhol o'chirib tashlayman)\n\n"
+    "🚀 Shundan so'ng menga bugungi yoki ertangi rejangizni yozib yuboring."
+)
+
 SETKEY_USAGE = ("AI orqali yozish/ovoz yuborish uchun avval o'zingizning bepul "
                 "Gemini API kalitingizni ulang:\n\n"
                 "1) https://aistudio.google.com/apikey saytiga kiring va \"Create API key\" bosing\n"
@@ -203,7 +224,7 @@ def handle_voice(chat_id, file_id):
 
 def handle(chat_id, text):
     if text.startswith("/start"):
-        reply(chat_id, "👋 Salom! Men kunlik rejalashtiruvchi botman.\n\n" + SETKEY_USAGE)
+        reply(chat_id, START_MESSAGE)
         return
     if text.startswith("/setkey"):
         parts = text.split(maxsplit=1)
